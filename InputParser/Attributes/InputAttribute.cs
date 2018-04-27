@@ -6,14 +6,14 @@ using System.Text;
 namespace InputParser
 {
     [AttributeUsage(AttributeTargets.Method)]
-    public class InputFunctionAttribute : Attribute
+    public class InputAttribute : Attribute
     {
         public string[] Names { get; set; }
 
-        public InputFunctionAttribute([CallerMemberName] string name = "") : this(new [] {name})
+        public InputAttribute([CallerMemberName] string name = "") : this(new [] {name})
         {
         }
-        public InputFunctionAttribute(params string[] names)
+        public InputAttribute(params string[] names)
         {
             Names = names;
         }

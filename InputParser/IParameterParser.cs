@@ -4,7 +4,8 @@ using System.Text;
 
 namespace InputParser
 {
-    public class NullInputFunctionAttribute : Attribute
+    public interface IParameterParser
     {
+        object Parse(string source);
     }
 }
