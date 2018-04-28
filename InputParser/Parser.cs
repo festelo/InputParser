@@ -21,11 +21,23 @@ namespace InputParser
                 var attribute = method.GetCustomAttribute<InputAttribute>();
                 if (attribute != null) parser.Methods.Add((attribute, method));
 
-                var nullattribute = method.GetCustomAttribute<DefaultInputAttribute>();
-                if (nullattribute != null)  parser.DefaultMethod = method;
+                var defaultattriubte = method.GetCustomAttribute<DefaultInputAttribute>();
+                if (defaultattriubte != null)
+                {
+                    var prms = method.GetParameters();
+                    if (prms.Length == 1 && prms[0].ParameterType == typeof(string))
+                        parser.isDefaultMethodWithParams = true;
+                    parser.defaultMethod = method;
+                }
+
+                var nullattribute = method.GetCustomAttribute<ReadingEndedAttribute>();
+                if (nullattribute != null)
+                {
+                    parser.readingEndedMethod = method;
+                }
             }
-            parser.TextReader = reader;
-            parser.TextWriter = writer;
+            parser.textReader = reader;
+            parser.textWriter = writer;
             return parser;
         }
         public static void InitFromThisThread(Type parserclass, TextReader reader, TextWriter writer, CancellationToken token = default(CancellationToken))
@@ -43,18 +55,21 @@ namespace InputParser
 
         private Parser() { }
         private readonly List<(InputAttribute Attribute, MethodInfo Method)> Methods = new List<(InputAttribute, MethodInfo)>();
-        private MethodInfo DefaultMethod {get; set; }
-        private TextReader TextReader { get; set; }
-        private TextWriter TextWriter { get; set; }
-        private Thread ParseThread { get; set; }
+
+        private bool isDefaultMethodWithParams { get; set; }
+        private MethodInfo readingEndedMethod { get; set; }
+        private MethodInfo defaultMethod {get; set; }
+        private TextReader textReader { get; set; }
+        private TextWriter textWriter { get; set; }
+        private Thread parseThread { get; set; }
         
 
         private CancellationToken CancellationToken { get; set; }
 
         private void CreateThreadForParse()
         {
-            ParseThread = new Thread(e => Parse());
-            ParseThread.Start();
+            parseThread = new Thread(e => Parse());
+            parseThread.Start();
         }
 
         private static bool IsAsyncMethod(MethodInfo method)
@@ -73,65 +88,83 @@ namespace InputParser
         {
             while (true)
             {
-                //will be changed
-                var task = TextReader.ReadLineAsync();
-                task.Wait(CancellationToken);
-                if(CancellationToken.IsCancellationRequested) return;
-                var str = task.Result;
                 MethodInfo method;
                 var parameters = new List<object>();
-                if (string.IsNullOrWhiteSpace(str))
+                string str;
+                void SetDefaultMethod()
                 {
-                    method = DefaultMethod;
+                    method = defaultMethod;
+                    if (isDefaultMethodWithParams)
+                    {
+                        parameters.Add(str);
+                    }
+                }
+
+                //will be changed
+                var task = textReader.ReadLineAsync();
+                task.Wait(CancellationToken);
+                if(CancellationToken.IsCancellationRequested) return;
+                str = task.Result;
+                if (str == null)
+                {
+                    method = readingEndedMethod;
+                }
+                else if (string.IsNullOrWhiteSpace(str))
+                {
+                    SetDefaultMethod();
                 }
                 else
                 {
                     var strarr = str.Split(' ');
                     var methods = Methods.Where(d => d.Attribute.Names?.Contains(strarr[0], StringComparer.CurrentCultureIgnoreCase) ?? false).ToArray();
-                    if (methods.Length == 0) continue;
-
-                    method = methods[0].Method;
-
-                    var parametersinfo = method.GetParameters();
-                    var parametersinfoLengthMin = 0;
-                    var parametersinfoLengthMax = parametersinfo.Length;
-                    foreach (var parameterInfo in parametersinfo)
+                    if (methods.Length == 0)
                     {
-                        if (!parameterInfo.IsOptional)
-                            parametersinfoLengthMin++;
+                        SetDefaultMethod();
                     }
-                    var parametersNeed = strarr.Length - 1;
-                    if (!(parametersinfoLengthMax >= parametersNeed && parametersinfoLengthMin <= parametersNeed)) continue;
-                    var j = 1;
-                    for (int i = 0; i < parametersNeed; i++)
+                    else
                     {
-                        var attr = parametersinfo[i].GetCustomAttribute<ParsedParameterAttribute>();
-                        if (attr != null)
+                        method = methods[0].Method;
+
+                        (ParameterInfo Parameter, bool Used)[] parametersinfo = method.GetParameters().Select(c => (c, false)).ToArray();
+                        var parametersinfoLengthMin = 0;
+                        var parametersinfoLengthMax = parametersinfo.Length;
+                        foreach (var parameterInfo in parametersinfo)
                         {
-                            var obj = attr.Parse(strarr[i + 1]);
-                            parameters.Add(obj);
+                            if (!parameterInfo.Parameter.IsOptional)
+                                parametersinfoLengthMin++;
                         }
-                        else
+                        var parametersNeed = strarr.Length - 1;
+                        if (!(parametersinfoLengthMax >= parametersNeed && parametersinfoLengthMin <= parametersNeed)) continue;
+                        var j = 1;
+                        for (int i = 0; i < parametersNeed; i++)
                         {
+                            if(parametersinfo[i].Used) continue;
                             try
                             {
-                                parameters.Add(Convert.ChangeType(strarr[j], parametersinfo[i].ParameterType));
+                                var attr = parametersinfo[i].Parameter.GetCustomAttribute<ParsedParameterAttribute>();
+                                if (attr != null)
+                                {
+                                    var obj = attr.Parse(strarr[i + 1]);
+                                    parameters.Add(obj);
+                                }
+                                else
+                                    parameters.Add(Convert.ChangeType(strarr[j], parametersinfo[i].Parameter.ParameterType));
+                                parametersinfo[i].Used = true;
                             }
                             catch (Exception e)
-                            {/*
-                            if (!parametersinfo[i].IsOptional) throw;
-                            parameters.Add(Type.Missing);
-                            continue;*/
-                                throw;
+                            {
+                                if (!parametersinfo[i].Parameter.IsOptional) throw;
+                                parameters.Add(Type.Missing);
+                                parametersinfo[i].Used = true;
                             }
+                            j++;
                         }
-                        j++;
-                    }
-                    if (parameters.Count < parametersinfoLengthMax)
-                    {
-                        for (var i = 0; i < parametersinfoLengthMax - parameters.Count; i++)
+                        if (parameters.Count < parametersinfoLengthMax)
                         {
-                            parameters.Add(Type.Missing);
+                            for (var i = 0; parameters.Count != parametersinfoLengthMax; i++)
+                            {
+                                parameters.Add(Type.Missing);
+                            }
                         }
                     }
                 }
@@ -139,11 +172,11 @@ namespace InputParser
                 {
                     throw new NotImplementedException();
                     var taskobj = method.Invoke(null, parameters.ToArray());
-                    ((Task<object>)taskobj).ContinueWith(o => TextWriter.WriteLine(o.Result), CancellationToken);
+                    ((Task<object>)taskobj).ContinueWith(o => textWriter.WriteLine(o.Result), CancellationToken);
                 }
                 else
                 {
-                    TextWriter.WriteLine(method.Invoke(null, parameters.ToArray()));
+                    textWriter.WriteLine(method.Invoke(null, parameters.ToArray()));
                 }
             }
         }

@@ -5,6 +5,6 @@ namespace InputParser
     [AttributeUsage(AttributeTargets.Method)]
     public class DefaultInputAttribute : InputAttribute
     {
-        public DefaultInputAttribute() : base(names: null) { }
+        public DefaultInputAttribute() : base(names: new [] { "" }) { }
     }
 }

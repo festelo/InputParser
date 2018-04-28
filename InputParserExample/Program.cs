@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Globalization;
 using System.Threading;
 using InputParser;
 
@@ -6,7 +7,7 @@ namespace InputParserExample
 {
     class TimeSpanParsedParameterAttribute : ParsedParameterAttribute
     {
-        public override object Parse(string s) => TimeSpan.Parse(s);
+        public override object Parse(string s) => TimeSpan.Parse(s, CultureInfo.InvariantCulture);
     }
     class Program
     {
@@ -18,17 +19,40 @@ namespace InputParserExample
 
     public static class InputClass
     {
+        /*
         [DefaultInput]
         public static string Default()
         {
-            return "Input is empty";
+            return "Command not found";
         }
 
-        [Input("say", "hello", "sayhello")]
-        public static string SayHello()
+        OR
+        */
+
+        [DefaultInput]
+        public static string Default(string inp)
         {
-            return "Hello";
+            return "Command not found. Your input is " + inp;
         }
+
+        [ReadingEnded]
+        public static string Null()
+        {
+            return "Reading ended. ^C received";
+        }
+
+        [Input]
+        public static string Method([TimeSpanParsedParameter]TimeSpan time = default(TimeSpan), int a = -1)
+        {
+            return "Hours is " + time.Hours + "\nNumber plus five is " + (a+5) + "\n";
+        }
+
+        [Input(new[] { "say", "hello", "sayhello" })]
+        public static string SayHello(string name = null)
+        {
+            return name == null? "Hello!" : "Hello, " + name;
+        }
+
         [Input]
         public static int Sum(int a, int b)
         {
